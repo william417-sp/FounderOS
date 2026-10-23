@@ -83,7 +83,7 @@ export function LocalBoard({ initial, defaultAgentId }: { initial: LocalBoardDat
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-mono text-[11px] uppercase tracking-[0.24em] text-os-dim">Local runtime</div>
         <div className={`rounded-full border px-2.5 py-0.5 font-mono text-[11px] ${data.status.ready ? 'border-emerald-500/40 text-emerald-400' : 'border-amber-500/40 text-amber-400'}`}>
-          {data.status.ready ? `ready · ${data.status.model}` : 'needs API key'}
+          {data.status.ready ? `ready · ${({ groq: 'Groq', ollama: 'Ollama (local)', gateway: 'AI Gateway', stub: 'stub' } as Record<string, string>)[data.status.provider] ?? data.status.provider} · ${data.status.model}` : 'needs a model (Ollama, Groq or AI Gateway)'}
         </div>
       </div>
       {!data.status.ready && <p className="text-[12px] text-amber-300/90">{data.status.detail}</p>}

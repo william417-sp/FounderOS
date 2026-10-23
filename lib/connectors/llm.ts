@@ -117,14 +117,180 @@ export function createGatewayProvider(model: string = DEFAULT_MODEL): LlmProvide
   };
 }
 
-export function getLlmProvider(): LlmProvider {
-  const name = process.env.LLM_PROVIDER ?? 'gateway';
-  if (name === 'stub') return stubLlmProvider;
+// ── OpenAI-compatible providers: Groq (free tier) and local Ollama ─────────
+const GROQ_KEY = 'GROQ_API_KEY';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+export const GROQ_DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+
+function resolveGroqKey(): string | undefined {
+  return resolveCred(GROQ_KEY, [CRED_FILES.agentsEnv, CRED_FILES.socialMedia]);
+}
+
+/** The Groq model in force: GROQ_MODEL, then LLM_MODEL, then the free-tier default. */
+export function groqModel(): string {
+  return process.env.GROQ_MODEL || process.env.LLM_MODEL || GROQ_DEFAULT_MODEL;
+}
+
+type OaiToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
+type OaiMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: OaiToolCall[] }
+  | { role: 'tool'; tool_call_id: string; content: string };
+
+/**
+ * Any OpenAI-compatible chat completions endpoint, via plain fetch (no extra
+ * dependency). Tools run in a bounded loop (6 steps, like the gateway).
+ * `req.model` is ignored: stored agent model ids are gateway-shaped.
+ */
+export function createOpenAiCompatProvider(opts: {
+  name: string;
+  url: string;
+  model: string;
+  key?: () => string | undefined;
+  fetchImpl?: typeof fetch;
+}): LlmProvider {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const label = opts.name === 'groq' ? 'Groq' : opts.name === 'ollama' ? 'Ollama' : opts.name;
+  return {
+    name: opts.name,
+    async chat(req) {
+      const key = opts.key?.();
+      const { zodSchema } = await import('ai');
+      const tools = (req.tools ?? []).map((t) => ({
+        type: 'function' as const,
+        function: { name: t.name, description: t.description, parameters: zodSchema(t.parameters as never).jsonSchema },
+      }));
+      const messages: OaiMessage[] = [
+        ...(req.system ? [{ role: 'system' as const, content: req.system }] : []),
+        ...req.messages
+          .filter((m) => m.role !== 'tool')
+          .map((m) => (m.role === 'assistant' ? { role: 'assistant' as const, content: m.content } : { role: m.role as 'system' | 'user', content: m.content })),
+      ];
+      const toolCalls: LlmToolCall[] = [];
+      for (let step = 0; step < 6; step++) {
+        const res = await fetchImpl(opts.url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+          body: JSON.stringify({ model: opts.model, messages, ...(tools.length ? { tools } : {}) }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          let msg = body;
+          try { msg = JSON.parse(body)?.error?.message ?? body; } catch { /* raw text */ }
+          throw new Error(`${label} ${res.status}: ${String(msg).slice(0, 300)}`);
+        }
+        const json = (await res.json()) as { choices?: { message?: { content?: string | null; tool_calls?: OaiToolCall[] } }[] };
+        const msg = json.choices?.[0]?.message;
+        const calls = msg?.tool_calls ?? [];
+        if (!calls.length || !req.tools?.length) return { text: msg?.content ?? '', toolCalls };
+        messages.push({ role: 'assistant', content: msg?.content ?? null, tool_calls: calls });
+        for (const c of calls) {
+          const spec = req.tools.find((t) => t.name === c.function.name);
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(c.function.arguments || '{}'); } catch { /* empty args */ }
+          const result = spec ? await spec.execute(args) : { error: `unknown tool ${c.function.name}` };
+          toolCalls.push({ name: c.function.name, args, result });
+          messages.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(result ?? null) });
+        }
+      }
+      return { text: '', toolCalls };
+    },
+  };
+}
+
+export function createGroqProvider(model: string = groqModel(), fetchImpl: typeof fetch = fetch): LlmProvider {
+  return createOpenAiCompatProvider({
+    name: 'groq',
+    url: GROQ_URL,
+    model,
+    fetchImpl,
+    key: () => {
+      const key = resolveGroqKey();
+      if (!key) throw new Error('GROQ_API_KEY is not set — add it to the environment or .env.local.');
+      return key;
+    },
+  });
+}
+
+export const OLLAMA_DEFAULT_MODEL = 'qwen2.5:3b';
+export const ollamaBaseUrl = (): string => (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+/** The Ollama model in force: OLLAMA_MODEL, then LLM_MODEL, then the default. */
+export function ollamaModel(): string {
+  return process.env.OLLAMA_MODEL || process.env.LLM_MODEL || OLLAMA_DEFAULT_MODEL;
+}
+export function createOllamaProvider(model: string = ollamaModel(), fetchImpl: typeof fetch = fetch): LlmProvider {
+  return createOpenAiCompatProvider({ name: 'ollama', url: `${ollamaBaseUrl()}/v1/chat/completions`, model, fetchImpl });
+}
+
+let ollamaCache: { ok: boolean; at: number } | null = null;
+/** Is a local Ollama answering with the configured model pulled? Cached 10s. */
+export async function ollamaReachable(fetchImpl: typeof fetch = fetch): Promise<boolean> {
+  if (process.env.OLLAMA_DISABLED === '1') return false;
+  if (ollamaCache && Date.now() - ollamaCache.at < 10_000) return ollamaCache.ok;
+  let ok = false;
+  try {
+    const res = await fetchImpl(`${ollamaBaseUrl()}/api/tags`, { signal: AbortSignal.timeout(1500) });
+    if (res.ok) {
+      const j = (await res.json()) as { models?: { name?: string; model?: string }[] };
+      const want = ollamaModel();
+      const names = (j.models ?? []).flatMap((m) => [m.name, m.model]).filter(Boolean) as string[];
+      ok = names.some((n) => n === want || n === `${want}:latest`);
+    }
+  } catch {
+    ok = false;
+  }
+  ollamaCache = { ok, at: Date.now() };
+  return ok;
+}
+/** Test hook: forget the cached Ollama probe. */
+export function resetOllamaProbe(): void {
+  ollamaCache = null;
+}
+
+export type ActiveProvider = 'stub' | 'groq' | 'ollama' | 'gateway';
+
+/** Which provider runs, in preference order: Groq (key), local Ollama (reachable), the AI Gateway (key). */
+export async function activeLlmProvider(): Promise<ActiveProvider | null> {
+  const forced = process.env.LLM_PROVIDER;
+  if (forced === 'stub') return 'stub';
+  if (forced === 'groq') return resolveGroqKey() ? 'groq' : null;
+  if (forced === 'ollama') return (await ollamaReachable()) ? 'ollama' : null;
+  if (forced === 'gateway') return resolveGatewayKey() ? 'gateway' : null;
+  if (resolveGroqKey()) return 'groq';
+  if (await ollamaReachable()) return 'ollama';
+  if (resolveGatewayKey()) return 'gateway';
+  return null;
+}
+
+/** The model a provider will use. */
+export function modelFor(active: ActiveProvider | null): string {
+  if (active === 'stub') return 'stub';
+  if (active === 'groq') return groqModel();
+  if (active === 'ollama') return ollamaModel();
+  return DEFAULT_MODEL;
+}
+
+function providerFor(active: ActiveProvider | null): LlmProvider {
+  if (active === 'stub') return stubLlmProvider;
+  if (active === 'groq') return createGroqProvider();
+  if (active === 'ollama') return createOllamaProvider();
   return createGatewayProvider();
 }
 
-export function chat(req: LlmChatRequest): Promise<LlmChatResult> {
-  return getLlmProvider().chat(req);
+/** Synchronous pick (no network probe): stub, Groq when keyed, else the gateway. Prefer resolveLlmProvider. */
+export function getLlmProvider(): LlmProvider {
+  if (process.env.LLM_PROVIDER === 'stub') return stubLlmProvider;
+  if (process.env.LLM_PROVIDER !== 'gateway' && resolveGroqKey()) return createGroqProvider();
+  return createGatewayProvider();
+}
+
+/** Full pick including a live Ollama probe. */
+export async function resolveLlmProvider(): Promise<LlmProvider> {
+  return providerFor(await activeLlmProvider());
+}
+
+export async function chat(req: LlmChatRequest): Promise<LlmChatResult> {
+  return (await resolveLlmProvider()).chat(req);
 }
 
 export async function llmStatus(): Promise<ConnectorStatus> {
@@ -132,12 +298,18 @@ export async function llmStatus(): Promise<ConnectorStatus> {
   if (process.env.LLM_PROVIDER === 'stub') {
     return { ...base, state: 'connected', detail: 'stub provider active (tests)' };
   }
-  const key = resolveGatewayKey();
-  if (!key) {
+  const active = await activeLlmProvider();
+  if (active === 'groq') {
+    return { ...base, name: 'LLM (Groq)', state: 'connected', detail: `Groq · model ${groqModel()}` };
+  }
+  if (active === 'ollama') {
+    return { ...base, name: 'LLM (Ollama)', state: 'connected', detail: `Local Ollama · model ${ollamaModel()}` };
+  }
+  if (active !== 'gateway') {
     return {
       ...base,
       state: 'not_configured',
-      detail: 'Set AI_GATEWAY_API_KEY in .env.local to enable agent chat via the Vercel AI Gateway.',
+      detail: 'Set AI_GATEWAY_API_KEY in .env.local (or GROQ_API_KEY, or run a local Ollama) to enable agent chat.',
     };
   }
   return { ...base, state: 'connected', detail: `Vercel AI Gateway · default model ${DEFAULT_MODEL}` };

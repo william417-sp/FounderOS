@@ -3,17 +3,17 @@
  *
  *   task (agent_tasks) ──run──▶ LLM via the existing gateway connector ──▶ agent_task_runs
  *
- * Honest by construction: with no AI_GATEWAY_API_KEY (and LLM_PROVIDER≠stub) a
+ * Provider order: Groq (GROQ_API_KEY), local Ollama, then the AI Gateway. With none a
  * run is recorded as 'needs_key' with a clear message, never fake output.
  */
 import { randomUUID } from 'node:crypto';
 import type { GladosDb } from '@/lib/db';
 import type { Agent } from '@/lib/schemas';
-import { getLlmProvider, llmStatus, LLM_DEFAULT_MODEL, type LlmProvider } from '@/lib/connectors/llm';
+import { activeLlmProvider, llmStatus, modelFor, resolveLlmProvider, type LlmProvider } from '@/lib/connectors/llm';
 import type { TaskRun } from '@/lib/db-ext/task-runs';
 
 export const NEEDS_KEY_MESSAGE =
-  'Needs API key: set AI_GATEWAY_API_KEY in .env.local (Vercel AI Gateway) and restart, then run the task again.';
+  'Needs a model: run a local Ollama (free), or set GROQ_API_KEY (free at console.groq.com) or AI_GATEWAY_API_KEY and restart, then run the task again.';
 
 const STUDIO =
   "You work for William Rosado's web/app studio in Puerto Rico. The studio builds websites and mockups for local businesses, " +
@@ -49,14 +49,13 @@ export const AGENT_PROMPTS: Record<string, string> = {
 export type RuntimeReadiness = { ready: boolean; provider: string; model: string; detail: string };
 
 export async function localRuntimeStatus(): Promise<RuntimeReadiness> {
-  const s = await llmStatus();
-  const stub = process.env.LLM_PROVIDER === 'stub';
-  const ready = stub || s.state !== 'not_configured';
+  const active = await activeLlmProvider();
+  const s = active ? await llmStatus() : null;
   return {
-    ready,
-    provider: stub ? 'stub' : 'gateway',
-    model: stub ? 'stub' : LLM_DEFAULT_MODEL,
-    detail: ready ? s.detail : NEEDS_KEY_MESSAGE,
+    ready: active !== null,
+    provider: active ?? 'none',
+    model: modelFor(active),
+    detail: s ? s.detail : NEEDS_KEY_MESSAGE,
   };
 }
 
@@ -153,7 +152,7 @@ export async function runAgentTask(db: GladosDb, taskId: string, opts: RunOption
   const prompt = [`Task: ${task.title}`, task.detail ? `Details: ${task.detail}` : '', context].filter(Boolean).join('\n\n');
 
   try {
-    const provider = opts.provider ?? getLlmProvider();
+    const provider = opts.provider ?? (await resolveLlmProvider());
     const reply = await provider.chat({ system: systemPromptFor(agent), messages: [{ role: 'user', content: prompt }] });
     const createdTaskIds: string[] = [];
     let output = reply.text;

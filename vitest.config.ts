@@ -35,6 +35,9 @@ export default defineConfig({
       // during a test run: old dirs are read in place. Migration tests opt in
       // with their own temp dirs.
       CREATIVE_ENGINE_MIGRATE: '0',
+      // Never let a local Ollama on the dev box change which LLM provider tests see.
+      OLLAMA_DISABLED: '1',
+      GROQ_API_KEY: '',
     },
   },
 });
