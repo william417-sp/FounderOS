@@ -1,3 +1,4 @@
+import { taskRunsRepo } from '@/lib/db-ext/task-runs';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -2309,6 +2310,8 @@ export function openDb(path: string) {
     callRecordings: callRecordingsRepo(db),
     deliverableDecisions: deliverableDecisionsRepo(db),
     cronRuns: cronRunsRepo(db),
+    /** Built-in local runtime run history (lib/agents/local-runtime.ts). */
+    taskRuns: taskRunsRepo(db),
     /** The live journal mode, read from SQLite (S10 FR-17), e.g. "wal". */
     journalMode: (): string => String(db.pragma('journal_mode', { simple: true }) ?? ''),
     close: () => db.close(),

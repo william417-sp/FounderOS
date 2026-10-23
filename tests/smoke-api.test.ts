@@ -62,6 +62,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'adscout/saved', load: () => import('@/app/api/adscout/saved/route'), url: 'http://localhost/api/adscout/saved' },
   { route: 'adscout/watchlist', load: () => import('@/app/api/adscout/watchlist/route'), url: 'http://localhost/api/adscout/watchlist' },
   { route: 'agents/activity', load: () => import('@/app/api/agents/activity/route'), url: 'http://localhost/api/agents/activity?limit=5' },
+  { route: 'agents/local', load: () => import('@/app/api/agents/local/route'), url: 'http://localhost/api/agents/local' },
   { route: 'agents/broadcast', load: () => import('@/app/api/agents/broadcast/route'), url: 'http://localhost/api/agents/broadcast' },
   { route: 'agents/work', load: () => import('@/app/api/agents/work/route'), url: 'http://localhost/api/agents/work?agentId=data-agent' },
   { route: 'brain', load: () => import('@/app/api/brain/route'), url: 'http://localhost/api/brain' },

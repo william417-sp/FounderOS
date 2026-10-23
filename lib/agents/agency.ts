@@ -1,8 +1,8 @@
 import type { AgentRunResult, RuntimeAgent } from '@/lib/agents/runtime';
 
 /**
- * William's agency roster (Puerto Rico web/app studio). Roster seats only:
- * no runtime is bound yet, so run() reports that honestly instead of faking work.
+ * William's agency roster (Puerto Rico web/app studio). Their tasks execute on the
+ * built-in local runtime (lib/agents/local-runtime.ts); run() here is the health check.
  */
 function seat(id: string, name: string, departmentId: string, description: string): RuntimeAgent {
   return {
@@ -12,7 +12,9 @@ function seat(id: string, name: string, departmentId: string, description: strin
     departmentId,
     configured: () => false,
     async run(): Promise<AgentRunResult> {
-      return { ok: false, summary: `${name} has no runtime bound yet — see /setup` };
+      const { localRuntimeStatus } = await import('@/lib/agents/local-runtime');
+      const s = await localRuntimeStatus();
+      return { ok: s.ready, summary: s.ready ? `${name} ready on the local runtime (${s.model}) — give it a task on /agents` : `${name}: ${s.detail}` };
     },
   };
 }
