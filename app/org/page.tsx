@@ -260,11 +260,11 @@ export default function OrgChartPage({ searchParams }: { searchParams?: { ventur
           scrolls when it genuinely overflows the viewport. Spacing widens with
           the screen: gap-5 → gap-8 (wide) → gap-12 (ultra / 32"). */}
       <div className="overflow-x-auto overflow-y-hidden pb-4 overscroll-x-contain" data-matrix-scroll>
-        <div className="mx-auto w-max">
+        <div className="mx-auto w-max max-w-full">
           {/* Rail inset by half a column (mx-36 = ½ of w-72) so it runs exactly
               center-to-center across the crews — connectors always meet it. */}
           <div className="mx-36 h-px bg-os-border-bright" />
-          <div className="flex gap-5 pt-4 wide:gap-8 ultra:gap-12">
+          <div className="flex flex-wrap justify-center gap-5 pt-4 wide:gap-8 ultra:gap-12">
           {tree.departments.map(({ department, roots }) => {
             const all = flattenNodes(roots).map((n) => n.agent);
             // Every lead at the department root is an instance slot; everything

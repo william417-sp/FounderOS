@@ -9,6 +9,7 @@ import { AgentsTabs } from '@/founderos/components/AgentsTabs';
 import { BoardLive } from '@/founderos/components/BoardLive';
 import { ConductorChat } from '@/founderos/components/ConductorChat';
 import { AgentsVolumePanel } from '@/founderos/components/AgentsVolumePanel';
+import { LocalRoster } from '@/founderos/components/LocalRoster';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,6 +85,9 @@ export default async function AgentsPage() {
                 screens the Conductor rides on top. */}
             <div className="grid gap-6 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_400px]">
               <div className="order-2 min-h-0 min-w-0 xl:order-none xl:col-start-1 xl:row-start-1 xl:h-full">
+                {!boardInitial.connected && (
+                  <LocalRoster departments={getDb().departments.all()} agents={getDb().agents.all()} />
+                )}
                 <BoardLive initial={boardInitial} boardUrl={boardUrl} />
               </div>
               <div className="order-1 min-h-0 xl:order-none xl:col-start-2 xl:row-start-1 xl:h-full">
