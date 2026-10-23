@@ -19,6 +19,7 @@ import type { LlmToolSpec } from '@/lib/connectors/llm';
 import { bdpilotStatePath, gbrainBin, gbrainConfigured } from '@/lib/stores';
 import type { AgentRunResult, RuntimeAgent } from '@/lib/agents/runtime';
 import { contentLabAgent } from '@/lib/agents/content-lab';
+import { agencyAgents } from '@/lib/agents/agency';
 
 /**
  * The agent roster. Every run() reports live, honest status: an agent whose
@@ -447,4 +448,5 @@ export const realAgents: RuntimeAgent[] = [
   },
   // Content Lab (docs/projects/content-lab SPEC §8): organic content intelligence, modelled on Ad Scout
   contentLabAgent(),
+  ...agencyAgents,
 ];
